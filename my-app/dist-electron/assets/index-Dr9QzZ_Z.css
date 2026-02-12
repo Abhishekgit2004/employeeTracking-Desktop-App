@@ -1,0 +1,59 @@
+.table-box {
+  margin-top: 20px;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+th, td {
+  border: 1px solid #ccc;
+  padding: 8px;
+  text-align: left;
+}
+
+th {
+  background: #f5f5f5;
+}
+
+h2 {
+  margin-bottom: 10px;
+}
+.analytics-container {
+  padding: 20px;
+  font-family: Arial;
+}
+
+.cards {
+  display: flex;
+  gap: 15px;
+  margin: 15px 0;
+}
+
+.card {
+  background: #222;
+  color: #fff;
+  padding: 15px;
+  flex: 1;
+}
+
+.panel {
+  margin-top: 20px;
+}
+
+.bars {
+  display: flex;
+  gap: 10px;
+  height: 200px;
+}
+
+.bar {
+  flex: 1;
+  text-align: center;
+}
+
+.fill {
+  background: green;
+  width: 100%;
+}

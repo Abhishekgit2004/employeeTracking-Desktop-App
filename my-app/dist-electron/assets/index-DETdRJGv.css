@@ -1,0 +1,95 @@
+.usage-container {
+  background: #1e1e1e;
+  color: #fff;
+  padding: 20px;
+  border-radius: 8px;
+  margin-top: 20px;
+  font-family: Arial, sans-serif;
+}
+
+.usage-title {
+  margin-bottom: 15px;
+  color: #facc15;
+  font-size: 20px;
+}
+
+.usage-empty {
+  color: #aaa;
+}
+
+.usage-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.usage-table th,
+.usage-table td {
+  border: 1px solid #444;
+  padding: 10px;
+}
+
+.usage-table th {
+  background: #2a2a2a;
+  color: #facc15;
+}
+
+.usage-table tr:hover {
+  background: #2f2f2f;
+}
+
+.usage-time {
+  text-align: right;
+  color: #4ade80;
+  font-weight: bold;
+}
+.usage-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 15px;
+}
+
+.usage-filter {
+  background: #2a2a2a;
+  color: #fff;
+  border: 1px solid #444;
+  padding: 6px 10px;
+  border-radius: 4px;
+}
+.analytics-container {
+  padding: 20px;
+  font-family: Arial;
+}
+
+.cards {
+  display: flex;
+  gap: 15px;
+  margin: 15px 0;
+}
+
+.card {
+  background: #222;
+  color: #fff;
+  padding: 15px;
+  flex: 1;
+}
+
+.panel {
+  margin-top: 20px;
+}
+
+.bars {
+  display: flex;
+  gap: 10px;
+  height: 200px;
+}
+
+.bar {
+  flex: 1;
+  text-align: center;
+}
+
+.fill {
+  background: green;
+  width: 100%;
+}
