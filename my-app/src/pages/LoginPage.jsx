@@ -107,6 +107,7 @@ export default function LoginPage({ onSwitch }) {
 const S = {
   container: {
     animation: "screenIn .4s cubic-bezier(.22,1,.36,1) both",
+    bgColor: "var(--surface)",
   },
 
   header: {
@@ -169,6 +170,7 @@ const S = {
     color: "#fff",
     cursor: "pointer",
     transition: "transform .15s, box-shadow .15s",
+    backgroundColor: "blue",
   },
 
   buttonDisabled: {

@@ -1,5 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import './Dashboard.css';
+// import ActivityCard from './ActivityCard';
+import ActivityCard from './ActivityCard';
+// import ScreenshotsViewer from './ScreenshotsViewer';
 
 const Dashboard = ({ user, onLogout }) => {
   const [isTracking, setIsTracking] = useState(false);
@@ -90,11 +93,26 @@ const Dashboard = ({ user, onLogout }) => {
                   site: act.site,
                   seconds: 0,
                   clicks: 0,
-                  category: act.category
+                  category: act.category,
+                  isBrowser: act.isBrowser || false,
+                  websites: []
                 };
               }
               allActivities[key].seconds += act.seconds || 0;
               allActivities[key].clicks += act.clicks || 0;
+              
+              // Merge websites if it's a browser
+              if (act.isBrowser && act.websites) {
+                act.websites.forEach(website => {
+                  const existingWebsite = allActivities[key].websites.find(w => w.site === website.site);
+                  if (existingWebsite) {
+                    existingWebsite.seconds += website.seconds || 0;
+                    existingWebsite.clicks += website.clicks || 0;
+                  } else {
+                    allActivities[key].websites.push({ ...website });
+                  }
+                });
+              }
             });
           }
         });
@@ -126,11 +144,17 @@ const Dashboard = ({ user, onLogout }) => {
                 site: act.site,
                 seconds: 0,
                 clicks: 0,
-                category: act.category
+                category: act.category,
+                isBrowser: act.isBrowser || false,
+                websites: []
               };
             }
             mergedActivities[key].seconds = act.seconds || 0;
             mergedActivities[key].clicks = act.clicks || 0;
+            
+            if (act.isBrowser && act.websites) {
+              mergedActivities[key].websites = act.websites;
+            }
           });
           
           setTodayActivity(Object.values(mergedActivities));
@@ -246,20 +270,6 @@ const Dashboard = ({ user, onLogout }) => {
     });
   };
 
-  const getAppIcon = (appName) => {
-    const name = appName.toLowerCase();
-    if (name.includes('chrome') || name.includes('edge') || name.includes('firefox') || name.includes('brave')) return '🌐';
-    if (name.includes('code') || name.includes('visual studio')) return '💻';
-    if (name.includes('slack')) return '💬';
-    if (name.includes('excel')) return '📊';
-    if (name.includes('word')) return '📝';
-    if (name.includes('outlook')) return '📧';
-    if (name.includes('teams')) return '👥';
-    if (name.includes('zoom')) return '📹';
-    if (name.includes('terminal')) return '⌨️';
-    return '📱';
-  };
-
   const calculateTotalSeconds = () => {
     return todaySessions.reduce((sum, session) => sum + (session.durationSeconds || 0), 0);
   };
@@ -363,30 +373,11 @@ const Dashboard = ({ user, onLogout }) => {
               .sort((a, b) => b.seconds - a.seconds)
               .slice(0, 8)
               .map((app, index) => (
-                <div key={index} className="app-card">
-                  <div className="app-header">
-                    <span className="app-icon">{getAppIcon(app.app)}</span>
-                    <h3>{app.app}</h3>
-                  </div>
-                  <div className="app-stats">
-                    <p className="app-duration">{formatDuration(app.seconds)}</p>
-                    <p className="app-category">{app.category}</p>
-                    {app.clicks > 0 && (
-                      <p className="app-clicks">🖱️ {app.clicks} clicks</p>
-                    )}
-                    {app.site && app.site !== '-' && (
-                      <p className="app-site">🌐 {app.site}</p>
-                    )}
-                  </div>
-                  <div className="app-progress-bar">
-                    <div
-                      className="app-progress-fill"
-                      style={{
-                        width: `${Math.min(100, (app.seconds / calculateTotalSeconds()) * 100)}%`,
-                      }}
-                    ></div>
-                  </div>
-                </div>
+                <ActivityCard
+                  key={index}
+                  activity={app}
+                  totalSeconds={calculateTotalSeconds()}
+                />
               ))}
           </div>
         ) : (

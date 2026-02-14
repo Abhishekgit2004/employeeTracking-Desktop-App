@@ -1,5 +1,6 @@
-const { app, BrowserWindow, ipcMain, dialog } = require("electron");
+const { app, BrowserWindow, ipcMain, dialog, desktopCapturer } = require("electron");
 const path = require("path");
+const fs = require('fs');
 const activeWin = require("active-win");
 const categorize = require("./helper/helper.js");
 const User = require("./model/user.model.js");
@@ -14,7 +15,7 @@ const bcrypt = require("bcrypt");
 let mainWindow;
 let isQuitting = false;
 
-// ✅ SESSION-BASED TRACKING
+// SESSION-BASED TRACKING
 let currentSessionId = null;
 let activityData = {}; 
 let mouseClicks = 0;
@@ -26,6 +27,12 @@ let trackingInterval = null;
 let trackingRunning = false;
 let sessionStartTime = null;
 let autoSaveInterval = null;
+
+// SCREENSHOT CONFIGURATION
+const SCREENSHOT_INTERVAL = 10 * 60 * 1000; // 10 minutes in milliseconds
+let screenshotInterval = null;
+let screenshotsDir = null;
+const isDev = !app.isPackaged;
 
 /* =====================================================
    WINDOW
@@ -40,8 +47,16 @@ function createWindow() {
       nodeIntegration: false
     }
   });
+  // const isDev=true
+ if (isDev) {
+    mainWindow.loadURL("http://localhost:5173");
+    mainWindow.webContents.openDevTools();
+  } else {
+    mainWindow.loadFile(
+      path.join(__dirname, "../dist/index.html")
+    );
+  }
 
-  mainWindow.loadURL("http://localhost:5173");
 
   mainWindow.on('close', async (event) => {
     if (isQuitting) return;
@@ -67,8 +82,8 @@ function createWindow() {
       }
     }
   });
-}
 
+}
 /* =====================================================
    HELPERS
 ===================================================== */
@@ -78,12 +93,188 @@ function today() {
 
 function extractWebsite(title) {
   if (!title) return "-";
-  return title
-    .replace(/ - (Google Chrome|Microsoft Edge|Brave|Firefox)/i, "")
-    .split(" | ")
-    .pop()
-    .split(" - ")
-    .pop();
+  
+  // Remove common browser names from the end
+  let cleaned = title.replace(/ - (Google Chrome|Microsoft Edge|Brave Browser|Brave|Firefox|Safari|Opera)$/i, "").trim();
+  
+  // If the title is empty after cleaning, return original
+  if (!cleaned) return title;
+  
+  // Split by common separators
+  const separators = [" - ", " | ", ": ", " – ", " — "];
+  
+  for (const sep of separators) {
+    if (cleaned.includes(sep)) {
+      const parts = cleaned.split(sep);
+      
+      // Check last part first (most common pattern: "Page Title - Site Name")
+      const lastPart = parts[parts.length - 1].trim();
+      if (lastPart.length > 0 && lastPart.length < 40) {
+        // Prefer parts that look like site names (short, might contain dots)
+        if (lastPart.includes(".") || /^[A-Z]/.test(lastPart) || lastPart.length < 20) {
+          return lastPart;
+        }
+      }
+      
+      // Check first part (for patterns like "Site: Page Title")
+      const firstPart = parts[0].trim();
+      if (firstPart.length > 0 && firstPart.length < 40) {
+        if (firstPart.includes(".") || /^[A-Z]/.test(firstPart) || firstPart.length < 20) {
+          return firstPart;
+        }
+      }
+    }
+  }
+  
+  // If no separator found, just return the cleaned title (truncated)
+  return cleaned.length > 40 ? cleaned.substring(0, 40) + "..." : cleaned;
+}
+
+/* =====================================================
+   SCREENSHOT FUNCTIONS
+===================================================== */
+function initScreenshotsDirectory() {
+  try {
+    const userDataPath = app.getPath('userData');
+    screenshotsDir = path.join(userDataPath, 'screenshots');
+    
+    // Create screenshots directory if it doesn't exist
+    if (!fs.existsSync(screenshotsDir)) {
+      fs.mkdirSync(screenshotsDir, { recursive: true });
+      console.log('✅ Screenshots directory created:', screenshotsDir);
+    }
+    
+    return screenshotsDir;
+  } catch (err) {
+    console.error('❌ Error creating screenshots directory:', err);
+    return null;
+  }
+}
+
+async function captureScreenshot() {
+  if (!trackingRunning || !currentSessionId || !global.CURRENT_USER_ID) {
+    return null;
+  }
+
+  try {
+    console.log('📸 Capturing screenshot...');
+
+    // Get available sources (screens)
+    const sources = await desktopCapturer.getSources({
+      types: ['screen'],
+      thumbnailSize: { width: 1920, height: 1080 }
+    });
+
+    if (sources.length === 0) {
+      console.error('❌ No screen sources available');
+      return null;
+    }
+
+    // Get the primary screen
+    const primarySource = sources[0];
+    const screenshot = primarySource.thumbnail;
+
+    // Generate filename with timestamp
+    const timestamp = Date.now();
+    const filename = `screenshot_${global.CURRENT_USER_ID}_${currentSessionId}_${timestamp}.png`;
+    const filepath = path.join(screenshotsDir, filename);
+
+    // Save screenshot to file
+    const buffer = screenshot.toPNG();
+    fs.writeFileSync(filepath, buffer);
+
+    console.log('✅ Screenshot saved:', filename);
+
+    // Return screenshot metadata
+    return {
+      filename: filename,
+      filepath: filepath,
+      timestamp: new Date().toISOString(),
+      sessionId: currentSessionId,
+      userId: global.CURRENT_USER_ID
+    };
+
+  } catch (err) {
+    console.error('❌ Screenshot capture error:', err);
+    return null;
+  }
+}
+
+function startScreenshotCapture() {
+  if (screenshotInterval) {
+    clearInterval(screenshotInterval);
+  }
+
+  // Take first screenshot immediately
+  captureScreenshot().then(screenshotData => {
+    if (screenshotData && currentSessionId) {
+      addScreenshotToSession(currentSessionId, screenshotData);
+    }
+  });
+
+  // Then capture every 10 minutes
+  screenshotInterval = setInterval(async () => {
+    const screenshotData = await captureScreenshot();
+    if (screenshotData && currentSessionId) {
+      addScreenshotToSession(currentSessionId, screenshotData);
+    }
+  }, SCREENSHOT_INTERVAL);
+
+  console.log('✅ Screenshot capture started (every 10 minutes)');
+}
+
+function stopScreenshotCapture() {
+  if (screenshotInterval) {
+    clearInterval(screenshotInterval);
+    screenshotInterval = null;
+    console.log('⏹️ Screenshot capture stopped');
+  }
+}
+
+async function addScreenshotToSession(sessionId, screenshotData) {
+  try {
+    await Session.findByIdAndUpdate(sessionId, {
+      $push: {
+        screenshots: {
+          filename: screenshotData.filename,
+          filepath: screenshotData.filepath,
+          timestamp: screenshotData.timestamp
+        }
+      }
+    });
+    console.log('📸 Screenshot added to session:', screenshotData.filename);
+  } catch (err) {
+    console.error('❌ Error adding screenshot to session:', err);
+  }
+}
+
+function cleanupOldScreenshots(daysToKeep = 30) {
+  try {
+    if (!screenshotsDir) return;
+
+    const files = fs.readdirSync(screenshotsDir);
+    const now = Date.now();
+    const maxAge = daysToKeep * 24 * 60 * 60 * 1000;
+
+    let deletedCount = 0;
+
+    files.forEach(file => {
+      const filepath = path.join(screenshotsDir, file);
+      const stats = fs.statSync(filepath);
+      const age = now - stats.mtimeMs;
+
+      if (age > maxAge) {
+        fs.unlinkSync(filepath);
+        deletedCount++;
+      }
+    });
+
+    if (deletedCount > 0) {
+      console.log(`🧹 Cleaned up ${deletedCount} old screenshots`);
+    }
+  } catch (err) {
+    console.error('❌ Screenshot cleanup error:', err);
+  }
 }
 
 /* =====================================================
@@ -100,16 +291,30 @@ async function periodicSave() {
 
     console.log(`💾 Auto-saving session... (${durationSeconds} seconds)`);
 
-    // Prepare activities
+    // Prepare activities with website breakdown
     const activities = Object.values(activityData).map(item => {
       const categorization = categorize(item.app, item.site, item.seconds);
-      return {
+      
+      const activity = {
         app: item.app,
         site: item.site,
         seconds: item.seconds,
         clicks: item.clicks,
-        category: categorization.category || "Uncategorized"
+        category: categorization.category || "Uncategorized",
+        isBrowser: item.isBrowser || false
       };
+      
+      // If this is a browser with websites, include the breakdown
+      if (item.isBrowser && item.websites) {
+        activity.websites = Object.entries(item.websites).map(([siteName, siteData]) => ({
+          site: siteName,
+          seconds: siteData.seconds,
+          clicks: siteData.clicks,
+          category: categorize(item.app, siteName, siteData.seconds).category || "Web Browsing"
+        }));
+      }
+      
+      return activity;
     });
 
     // Update session with current data
@@ -139,22 +344,57 @@ function stopPeriodicSave() {
 }
 
 /* =====================================================
-   ACTIVITY AGGREGATION
+   ACTIVITY AGGREGATION - HIERARCHICAL TRACKING
 ===================================================== */
 function aggregateActivity(appName, site, seconds, clicks) {
-  const key = appName;
+  const browsers = ["chrome", "edge", "brave", "firefox", "safari", "opera"];
+  const isBrowser = browsers.some(b => appName.toLowerCase().includes(b));
   
-  if (!activityData[key]) {
-    activityData[key] = {
-      app: appName,
-      site: site,
-      seconds: 0,
-      clicks: 0
-    };
+  if (isBrowser && site && site !== "-") {
+    // For browsers, track BOTH the browser AND the individual website
+    
+    // 1. Track the browser itself (parent)
+    const browserKey = appName;
+    if (!activityData[browserKey]) {
+      activityData[browserKey] = {
+        app: appName,
+        site: "-",
+        seconds: 0,
+        clicks: 0,
+        isBrowser: true,
+        websites: {} // Store individual websites here
+      };
+    }
+    activityData[browserKey].seconds += seconds;
+    activityData[browserKey].clicks += clicks;
+    
+    // 2. Track the individual website (child)
+    if (!activityData[browserKey].websites[site]) {
+      activityData[browserKey].websites[site] = {
+        site: site,
+        seconds: 0,
+        clicks: 0
+      };
+    }
+    activityData[browserKey].websites[site].seconds += seconds;
+    activityData[browserKey].websites[site].clicks += clicks;
+    
+    console.log(`🌐 ${appName} → ${site} (${seconds}s)`);
+  } else {
+    // For non-browser apps, track normally
+    const key = appName;
+    if (!activityData[key]) {
+      activityData[key] = {
+        app: appName,
+        site: site,
+        seconds: 0,
+        clicks: 0,
+        isBrowser: false
+      };
+    }
+    activityData[key].seconds += seconds;
+    activityData[key].clicks += clicks;
   }
-  
-  activityData[key].seconds += seconds;
-  activityData[key].clicks += clicks;
 }
 
 /* =====================================================
@@ -176,9 +416,20 @@ async function track() {
     let appName = win.owner.name;
     let site = "-";
 
-    const browsers = ["chrome", "edge", "brave", "firefox"];
-    if (browsers.some(b => appName.toLowerCase().includes(b))) {
+    // List of browsers to detect
+    const browsers = ["chrome", "edge", "brave", "firefox", "safari", "opera"];
+    const isBrowser = browsers.some(b => appName.toLowerCase().includes(b));
+
+    if (isBrowser && win.title) {
+      // Extract website from browser title
       site = extractWebsite(win.title);
+      
+      // Detailed logging for debugging
+      console.log("┌─── Browser Activity Detected ───");
+      console.log("│ App:", appName);
+      console.log("│ Raw Title:", win.title);
+      console.log("│ Extracted Site:", site);
+      console.log("└─────────────────────────────────");
     }
 
     if (lastApp) {
@@ -205,6 +456,7 @@ function startTracking() {
 
   trackingInterval = setInterval(track, 5000);
   startPeriodicSave();
+  startScreenshotCapture(); // Start screenshot capture
 }
 
 function stopTracking() {
@@ -214,6 +466,7 @@ function stopTracking() {
   }
 
   stopPeriodicSave();
+  stopScreenshotCapture(); // Stop screenshot capture
   lastApp = null;
   lastSite = null;
 }
@@ -222,7 +475,7 @@ function stopTracking() {
    SESSION MANAGEMENT
 ===================================================== */
 
-// ✅ START NEW SESSION
+// START NEW SESSION
 async function startSession() {
   try {
     if (!global.CURRENT_USER_ID) {
@@ -245,6 +498,7 @@ async function startSession() {
       endTime: null,
       durationSeconds: 0,
       activities: [],
+      screenshots: [],
       status: 'active'
     });
 
@@ -267,7 +521,7 @@ async function startSession() {
   }
 }
 
-// ✅ END CURRENT SESSION
+// END CURRENT SESSION
 async function endSession() {
   try {
     if (!trackingRunning || !currentSessionId) {
@@ -282,16 +536,30 @@ async function endSession() {
 
     stopTracking();
 
-    // Prepare final activities
+    // Prepare final activities with website breakdown
     const activities = Object.values(activityData).map(item => {
       const categorization = categorize(item.app, item.site, item.seconds);
-      return {
+      
+      const activity = {
         app: item.app,
         site: item.site,
         seconds: item.seconds,
         clicks: item.clicks,
-        category: categorization.category || "Uncategorized"
+        category: categorization.category || "Uncategorized",
+        isBrowser: item.isBrowser || false
       };
+      
+      // If this is a browser with websites, include the breakdown
+      if (item.isBrowser && item.websites) {
+        activity.websites = Object.entries(item.websites).map(([siteName, siteData]) => ({
+          site: siteName,
+          seconds: siteData.seconds,
+          clicks: siteData.clicks,
+          category: categorize(item.app, siteName, siteData.seconds).category || "Web Browsing"
+        }));
+      }
+      
+      return activity;
     });
 
     // Update session with final data
@@ -333,7 +601,7 @@ async function endSession() {
    IPC HANDLERS
 ===================================================== */
 
-// -------- REGISTRATION --------
+// REGISTRATION
 ipcMain.handle("register", async (event, payload) => {
   try {
     const { name, username, email, password, role } = payload;
@@ -379,7 +647,7 @@ ipcMain.handle("register", async (event, payload) => {
   }
 });
 
-// -------- LOGIN --------
+// LOGIN
 ipcMain.handle("login", async (_, { username, password }) => {
   try {
     const user = await User.findOne({ username }).lean();
@@ -423,17 +691,15 @@ ipcMain.handle("login", async (_, { username, password }) => {
   }
 });
 
-// -------- START WORK --------
+// SESSION HANDLERS
 ipcMain.handle("session:start", async () => {
   return await startSession();
 });
 
-// -------- STOP WORK --------
 ipcMain.handle("session:stop", async () => {
   return await endSession();
 });
 
-// -------- SESSION STATUS --------
 ipcMain.handle("session:status", async () => {
   if (trackingRunning && currentSessionId) {
     return {
@@ -443,7 +709,6 @@ ipcMain.handle("session:status", async () => {
     };
   }
 
-  // Check for incomplete session in DB
   if (global.CURRENT_USER_ID) {
     try {
       const incompleteSession = await Session.findOne({
@@ -470,7 +735,6 @@ ipcMain.handle("session:status", async () => {
   };
 });
 
-// -------- RESUME INCOMPLETE SESSION --------
 ipcMain.handle("session:resume", async (_, { sessionId }) => {
   try {
     const session = await Session.findById(sessionId).lean();
@@ -479,12 +743,10 @@ ipcMain.handle("session:resume", async (_, { sessionId }) => {
       return { success: false, message: "Session not found or already completed" };
     }
 
-    // Resume the session
     currentSessionId = sessionId;
     sessionStartTime = new Date(session.startTime);
     trackingRunning = true;
 
-    // Restore activity data
     activityData = {};
     if (session.activities && session.activities.length > 0) {
       session.activities.forEach(act => {
@@ -492,8 +754,20 @@ ipcMain.handle("session:resume", async (_, { sessionId }) => {
           app: act.app,
           site: act.site,
           seconds: act.seconds,
-          clicks: act.clicks
+          clicks: act.clicks,
+          isBrowser: act.isBrowser || false,
+          websites: {}
         };
+        
+        if (act.isBrowser && act.websites) {
+          act.websites.forEach(website => {
+            activityData[act.app].websites[website.site] = {
+              site: website.site,
+              seconds: website.seconds,
+              clicks: website.clicks
+            };
+          });
+        }
       });
     }
 
@@ -514,20 +788,34 @@ ipcMain.handle("session:resume", async (_, { sessionId }) => {
   }
 });
 
-// -------- GET CURRENT ACTIVITY (IN-MEMORY) --------
+// ACTIVITY HANDLERS
 ipcMain.handle("activity:current", async () => {
   try {
     if (!trackingRunning || !currentSessionId) {
       return { success: false, message: "No active session" };
     }
 
-    const activities = Object.values(activityData).map(item => ({
-      app: item.app,
-      site: item.site,
-      seconds: item.seconds,
-      clicks: item.clicks,
-      category: categorize(item.app, item.site, item.seconds).category || "Uncategorized"
-    }));
+    const activities = Object.values(activityData).map(item => {
+      const activity = {
+        app: item.app,
+        site: item.site,
+        seconds: item.seconds,
+        clicks: item.clicks,
+        category: categorize(item.app, item.site, item.seconds).category || "Uncategorized",
+        isBrowser: item.isBrowser || false
+      };
+
+      if (item.isBrowser && item.websites) {
+        activity.websites = Object.entries(item.websites).map(([siteName, siteData]) => ({
+          site: siteName,
+          seconds: siteData.seconds,
+          clicks: siteData.clicks,
+          category: categorize(item.app, siteName, siteData.seconds).category || "Web Browsing"
+        }));
+      }
+
+      return activity;
+    });
 
     return {
       success: true,
@@ -540,16 +828,13 @@ ipcMain.handle("activity:current", async () => {
   }
 });
 
-// -------- GET USER SESSIONS (FIXED DATE FILTERING) --------
 ipcMain.handle("sessions:get", async (_, { userId, date, startDate, endDate }) => {
   try {
     const query = { userId };
 
     if (date) {
-      // For exact date match, query sessions where the date field equals the provided date
       query.date = date;
     } else if (startDate || endDate) {
-      // For date range
       query.date = {};
       if (startDate) query.date.$gte = startDate;
       if (endDate) query.date.$lte = endDate;
@@ -582,7 +867,7 @@ ipcMain.handle("sessions:get", async (_, { userId, date, startDate, endDate }) =
   }
 });
 
-// -------- GET ALL EMPLOYEES --------
+// HR HANDLERS
 ipcMain.handle("employees:getAll", async () => {
   try {
     const employees = await User.find({ role: USER_ROLE.EMPLOYEE })
@@ -602,14 +887,12 @@ ipcMain.handle("employees:getAll", async () => {
   }
 });
 
-// -------- HR DASHBOARD (FIXED DATE FILTERING) --------
 ipcMain.handle("hr:dashboard", async (_, { date }) => {
   try {
     const targetDate = date || today();
 
     console.log("📅 HR Dashboard - Target Date:", targetDate);
 
-    // Get all sessions for the date
     const sessions = await Session.find({ date: targetDate })
       .populate("userId", "name username email")
       .sort({ startTime: 1 })
@@ -617,7 +900,6 @@ ipcMain.handle("hr:dashboard", async (_, { date }) => {
 
     console.log(`📊 HR Dashboard - Found ${sessions.length} sessions`);
 
-    // Group sessions by user
     const userMap = {};
 
     sessions.forEach(session => {
@@ -652,7 +934,6 @@ ipcMain.handle("hr:dashboard", async (_, { date }) => {
 
       userMap[userId].totalSeconds += session.durationSeconds || 0;
       
-      // Merge activities
       if (session.activities) {
         userMap[userId].totalActivities.push(...session.activities);
       }
@@ -672,7 +953,6 @@ ipcMain.handle("hr:dashboard", async (_, { date }) => {
   }
 });
 
-// -------- CALCULATE PRODUCTIVITY --------
 function calculateProductivity(activities) {
   let workSeconds = 0;
   let totalSeconds = 0;
@@ -688,7 +968,47 @@ function calculateProductivity(activities) {
   return totalSeconds > 0 ? Math.round((workSeconds / totalSeconds) * 100) : 0;
 }
 
-// -------- MOUSE CLICK TRACKING --------
+// SCREENSHOT HANDLERS
+ipcMain.handle("screenshots:get", async (_, { sessionId }) => {
+  try {
+    const session = await Session.findById(sessionId)
+      .select('screenshots')
+      .lean();
+
+    if (!session) {
+      return { success: false, message: "Session not found" };
+    }
+
+    return {
+      success: true,
+      screenshots: session.screenshots || []
+    };
+  } catch (err) {
+    console.error("Get screenshots error:", err);
+    return { success: false, message: "Failed to fetch screenshots" };
+  }
+});
+
+ipcMain.handle("screenshots:getFile", async (_, { filepath }) => {
+  try {
+    if (!fs.existsSync(filepath)) {
+      return { success: false, message: "Screenshot file not found" };
+    }
+
+    const buffer = fs.readFileSync(filepath);
+    const base64 = buffer.toString('base64');
+
+    return {
+      success: true,
+      data: `data:image/png;base64,${base64}`
+    };
+  } catch (err) {
+    console.error("Get screenshot file error:", err);
+    return { success: false, message: "Failed to load screenshot" };
+  }
+});
+
+// MOUSE TRACKING
 ipcMain.on("mouse-click", () => {
   mouseClicks++;
 });
@@ -698,6 +1018,8 @@ ipcMain.on("mouse-click", () => {
 ===================================================== */
 app.whenReady().then(async () => {
   await connectDB();
+  initScreenshotsDirectory();
+  cleanupOldScreenshots(30); // Keep screenshots for 30 days
   createWindow();
 });
 

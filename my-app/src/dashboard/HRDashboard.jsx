@@ -1,5 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import './HRDashboard.css';
+import ScreenshotsViewer from './ScreenshotsViewer';
 
 const HRDashboard = ({ user, onLogout }) => {
   const [selectedDate, setSelectedDate] = useState(getTodayDate());
@@ -7,12 +8,13 @@ const HRDashboard = ({ user, onLogout }) => {
   const [selectedEmployee, setSelectedEmployee] = useState(null);
   const [employeeSessions, setEmployeeSessions] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [expandedActivities, setExpandedActivities] = useState({}); // Track which activities are expanded
 
   function getTodayDate() {
     return new Date().toISOString().split('T')[0];
   }
 
-  useEffect(() => {
+  React.useEffect(() => {
     fetchDashboard();
   }, [selectedDate]);
 
@@ -43,8 +45,8 @@ const HRDashboard = ({ user, onLogout }) => {
   const viewEmployeeDetail = async (employee) => {
     console.log('👤 Viewing details for:', employee.name, '(ID:', employee._id, ')');
     setSelectedEmployee(employee);
+    setExpandedActivities({}); // Reset expanded state when switching employees
     
-    // Fetch all sessions for this employee on this date
     try {
       console.log('🔍 Fetching sessions for userId:', employee._id, 'date:', selectedDate);
       
@@ -66,6 +68,14 @@ const HRDashboard = ({ user, onLogout }) => {
       console.error('Error fetching employee sessions:', err);
       setEmployeeSessions([]);
     }
+  };
+
+  const toggleActivityExpansion = (sessionId, activityIndex) => {
+    const key = `${sessionId}-${activityIndex}`;
+    setExpandedActivities(prev => ({
+      ...prev,
+      [key]: !prev[key]
+    }));
   };
 
   const formatDuration = (seconds) => {
@@ -136,7 +146,7 @@ const HRDashboard = ({ user, onLogout }) => {
             onChange={(e) => {
               console.log('📅 Date changed to:', e.target.value);
               setSelectedDate(e.target.value);
-              setSelectedEmployee(null); // Reset employee selection on date change
+              setSelectedEmployee(null);
             }}
             max={getTodayDate()}
           />
@@ -289,30 +299,65 @@ const HRDashboard = ({ user, onLogout }) => {
                         <div className="activities-grid">
                           {session.activities
                             .sort((a, b) => b.seconds - a.seconds)
-                            .slice(0, 8)
-                            .map((activity, idx) => (
-                              <div key={idx} className="activity-mini-card">
-                                <span className="activity-icon">{getAppIcon(activity.app)}</span>
-                                <div className="activity-mini-info">
-                                  <span className="activity-name">{activity.app}</span>
-                                  <span className="activity-time">{formatDuration(activity.seconds)}</span>
-                                  <span className="activity-cat">{activity.category}</span>
+                            .map((activity, idx) => {
+                              const hasWebsites = activity.isBrowser && activity.websites && activity.websites.length > 0;
+                              const expansionKey = `${session._id}-${idx}`;
+                              const isExpanded = expandedActivities[expansionKey];
+
+                              return (
+                                <div key={idx} className="activity-detail-card">
+                                  <div 
+                                    className="activity-mini-card"
+                                    onClick={() => hasWebsites && toggleActivityExpansion(session._id, idx)}
+                                    style={{ cursor: hasWebsites ? 'pointer' : 'default' }}
+                                  >
+                                    <span className="activity-icon">{getAppIcon(activity.app)}</span>
+                                    <div className="activity-mini-info">
+                                      <span className="activity-name">
+                                        {activity.app}
+                                        {hasWebsites && (
+                                          <span style={{ marginLeft: '6px', fontSize: '0.75rem', color: '#a1a1aa' }}>
+                                            ({activity.websites.length} sites)
+                                          </span>
+                                        )}
+                                      </span>
+                                      <span className="activity-time">{formatDuration(activity.seconds)}</span>
+                                      <span className="activity-cat">{activity.category}</span>
+                                    </div>
+                                    {hasWebsites && (
+                                      <span className="expand-icon-mini">
+                                        {isExpanded ? '▼' : '▶'}
+                                      </span>
+                                    )}
+                                  </div>
+
+                                  {/* Expandable websites list */}
+                                  {hasWebsites && isExpanded && (
+                                    <div className="websites-breakdown">
+                                      <div className="websites-breakdown-header">Websites visited:</div>
+                                      {activity.websites
+                                        .sort((a, b) => b.seconds - a.seconds)
+                                        .map((website, widx) => (
+                                          <div key={widx} className="website-breakdown-item">
+                                            <span className="website-breakdown-icon">🔗</span>
+                                            <div className="website-breakdown-info">
+                                              <span className="website-breakdown-name">{website.site}</span>
+                                              <span className="website-breakdown-time">{formatDuration(website.seconds)}</span>
+                                            </div>
+                                            <span className="website-breakdown-category">{website.category}</span>
+                                          </div>
+                                        ))}
+                                    </div>
+                                  )}
                                 </div>
-                              </div>
-                            ))}
+                              );
+                            })}
                         </div>
-                        {session.activities.length > 8 && (
-                          <p style={{ 
-                            textAlign: 'center', 
-                            marginTop: '1rem', 
-                            fontSize: '0.875rem',
-                            color: '#a1a1aa'
-                          }}>
-                            + {session.activities.length - 8} more apps
-                          </p>
-                        )}
                       </div>
                     )}
+
+                    {/* Screenshots Section */}
+                    <ScreenshotsViewer session={session} />
                   </div>
                 ))}
               </div>

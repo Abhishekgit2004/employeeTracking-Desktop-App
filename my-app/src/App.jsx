@@ -1,39 +1,64 @@
-/* =====================================================
-   App.jsx
-   ===================================================== */
-
-import { useState } from "react";
-// import AuthLayout from "./auth/AuthLayout";
+import React, { useState, useEffect } from "react";
 import AuthLayout from "./pages/AuthLayout";
 import Dashboard from "./dashboard/Dashboard";
 import HRDashboard from "./dashboard/HRDashboard";
-import "./assets/global.css";
 
 export default function App() {
-  const [user, setUser] = useState(null);
+  const [currentUser, setCurrentUser] = useState(null);
+  const [isLoading, setIsLoading] = useState(true);
 
-  const handleLoginSuccess = (userData) => {
-    console.log("✅ Login successful in App:", userData);
-    setUser(userData);
+  useEffect(() => {
+    const handleClick = () => {
+      if (currentUser) {
+        window.electron.trackMouseClick();
+      }
+    };
+
+    window.addEventListener('click', handleClick);
+    return () => window.removeEventListener('click', handleClick);
+  }, [currentUser]);
+
+  useEffect(() => {
+    setIsLoading(false);
+  }, []);
+
+  const handleLoginSuccess = (user) => {
+    console.log('User logged in:', user);
+    setCurrentUser(user);
   };
 
-  const handleLogout = () => {
-    console.log("👋 Logging out...");
-    localStorage.removeItem("currentUser");
-    setUser(null);
-  };
-
-  // If user is authenticated, show appropriate dashboard
-  if (user) {
-    // Route to HR dashboard for HR/ADMIN roles
-    if (user.role === "HR" || user.role === "ADMIN") {
-      return <HRDashboard user={user} onLogout={handleLogout} />;
+  const handleLogout = async () => {
+    try {
+      await window.electron.stopSession();
+      localStorage.removeItem("currentUser");
+    } catch (err) {
+      console.error('Error stopping session:', err);
     }
     
-    // Route to employee dashboard
-    return <Dashboard user={user} onLogout={handleLogout} />;
+    setCurrentUser(null);
+  };
+
+  if (isLoading) {
+    return (
+      <div style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        height: '100vh',
+        background: 'var(--bg)'
+      }}>
+        <div style={{ color: 'var(--text-primary)' }}>Loading...</div>
+      </div>
+    );
   }
 
-  // Show auth layout if not authenticated
+  if (currentUser) {
+    if (currentUser.role === 'HR' || currentUser.role === 'ADMIN') {
+      return <HRDashboard user={currentUser} onLogout={handleLogout} />;
+    }
+    
+    return <Dashboard user={currentUser} onLogout={handleLogout} />;
+  }
+
   return <AuthLayout onLoginSuccess={handleLoginSuccess} />;
 }
