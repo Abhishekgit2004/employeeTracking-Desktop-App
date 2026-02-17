@@ -2,7 +2,7 @@ import React, { useState, useEffect } from "react";
 import AuthLayout from "./pages/AuthLayout";
 import Dashboard from "./dashboard/Dashboard";
 import HRDashboard from "./dashboard/HRDashboard";
-
+import AdminDashboard from "./dashboard/AdminDashboard"; // Import the Admin
 export default function App() {
   const [currentUser, setCurrentUser] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -53,8 +53,11 @@ export default function App() {
   }
 
   if (currentUser) {
-    if (currentUser.role === 'HR' || currentUser.role === 'ADMIN') {
+    if (currentUser.role === 'HR') {
       return <HRDashboard user={currentUser} onLogout={handleLogout} />;
+    }
+      if (currentUser.role === 'ADMIN') {
+      return <AdminDashboard user={currentUser} onLogout={handleLogout} />;
     }
     
     return <Dashboard user={currentUser} onLogout={handleLogout} />;

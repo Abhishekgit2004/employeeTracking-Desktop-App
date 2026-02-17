@@ -5,31 +5,46 @@ const attendanceSchema = new mongoose.Schema(
     userId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
-      required: true
+      required: true,
     },
     date: {
-      type: String, // Format: "YYYY-MM-DD"
-      required: true
+      type: String, // YYYY-MM-DD format
+      required: true,
     },
-    loginTime: {
+    firstSessionStart: {
       type: Date,
-      required: true
+      required: true,
     },
-    logoutTime: {
+    lastSessionEnd: {
       type: Date,
-      default: null          // ← filled in on logout, not on login
+      default: null,
     },
-    totalSeconds: {
+    totalWorkSeconds: {
       type: Number,
-      default: 0             // ← calculated on logout
-    }
+      default: 0,
+    },
+    sessionsCount: {
+      type: Number,
+      default: 0,
+    },
+    status: {
+      type: String,
+      enum: ["active", "completed"],
+      default: "active",
+    },
+    // Reference to all sessions for this day
+    sessionIds: [{
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Session"
+    }]
   },
   {
-    timestamps: true
+    timestamps: true,
   }
 );
 
-// ✅ Compound index to ensure one record per user per day
+// Compound index for faster queries
 attendanceSchema.index({ userId: 1, date: 1 }, { unique: true });
+attendanceSchema.index({ date: 1, status: 1 });
 
 module.exports = mongoose.model("Attendance", attendanceSchema);

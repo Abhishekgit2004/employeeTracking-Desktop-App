@@ -567,3 +567,63 @@
     grid-template-columns: 1fr;
   }
 }
+
+/* HR Tabs */
+.hr-tabs {
+  display: flex;
+  gap: 8px;
+  background: var(--surface);
+  padding: 8px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  margin: 0 24px 24px;
+}
+
+.hr-tab {
+  flex: 1;
+  padding: 12px 24px;
+  background: transparent;
+  border: none;
+  border-radius: 8px;
+  font-weight: 600;
+  font-size: 15px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.hr-tab:hover {
+  background: var(--input-bg);
+}
+
+.hr-tab.active {
+  background: var(--accent);
+  color: white;
+}
+
+.date-range-control {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.date-range-control label {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.date-range-control input {
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--input-bg);
+  color: var(--text-primary);
+}
+
+.date-range-control span {
+  color: var(--text-secondary);
+}
+
+.attendance-view {
+  padding: 0 24px;
+}

@@ -136,6 +136,7 @@ export default function SignupPage({ onSwitch }) {
           options={[
             { value: "EMPLOYEE", label: "Employee" },
             { value: "HR", label: "HR / Manager" },
+            { value: "ADMIN", label: "Admin" },
           ]}
           disabled={loading}
         />

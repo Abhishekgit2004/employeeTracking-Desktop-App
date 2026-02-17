@@ -8,7 +8,7 @@ const connectDB = require("./config/db.js");
 const Session = require("./model/Session.js");
 const { USER_ROLE } = require("./enum.js");
 const bcrypt = require("bcrypt");
-
+const Attendance = require("./model/Attendance.js");
 /* =====================================================
    GLOBAL STATE
 ===================================================== */
@@ -29,7 +29,7 @@ let sessionStartTime = null;
 let autoSaveInterval = null;
 
 // SCREENSHOT CONFIGURATION
-const SCREENSHOT_INTERVAL = 10 * 60 * 1000; // 10 minutes in milliseconds
+const SCREENSHOT_INTERVAL = 1 * 60 * 1000; // 10 minutes in milliseconds
 let screenshotInterval = null;
 let screenshotsDir = null;
 const isDev = !app.isPackaged;
@@ -129,7 +129,72 @@ function extractWebsite(title) {
   // If no separator found, just return the cleaned title (truncated)
   return cleaned.length > 40 ? cleaned.substring(0, 40) + "..." : cleaned;
 }
+/* =====================================================
+   ATTENDANCE MANAGEMENT
+===================================================== */
 
+// Update or create attendance record when session starts
+async function updateAttendanceOnSessionStart(sessionId, startTime) {
+  try {
+    const date = today();
+    
+    const attendance = await Attendance.findOneAndUpdate(
+      { 
+        userId: global.CURRENT_USER_ID, 
+        date: date 
+      },
+      {
+        $setOnInsert: {
+          userId: global.CURRENT_USER_ID,
+          date: date,
+          firstSessionStart: startTime,
+          status: 'active'
+        },
+        $inc: { sessionsCount: 1 },
+        $push: { sessionIds: sessionId }
+      },
+      { 
+        upsert: true, 
+        new: true,
+        setDefaultsOnInsert: true
+      }
+    );
+
+    console.log('✅ Attendance record updated on session start');
+    return attendance;
+  } catch (err) {
+    console.error('❌ Error updating attendance on start:', err);
+    return null;
+  }
+}
+
+// Update attendance when session ends
+async function updateAttendanceOnSessionEnd(sessionId, endTime, durationSeconds) {
+  try {
+    const date = today();
+    
+    const attendance = await Attendance.findOneAndUpdate(
+      { 
+        userId: global.CURRENT_USER_ID, 
+        date: date 
+      },
+      {
+        lastSessionEnd: endTime,
+        $inc: { totalWorkSeconds: durationSeconds },
+        status: 'completed'
+      },
+      { 
+        new: true 
+      }
+    );
+
+    console.log('✅ Attendance record updated on session end');
+    return attendance;
+  } catch (err) {
+    console.error('❌ Error updating attendance on end:', err);
+    return null;
+  }
+}
 /* =====================================================
    SCREENSHOT FUNCTIONS
 ===================================================== */
@@ -153,30 +218,68 @@ function initScreenshotsDirectory() {
 
 async function captureScreenshot() {
   if (!trackingRunning || !currentSessionId || !global.CURRENT_USER_ID) {
+    console.log('⚠️ Screenshot skipped: tracking not active');
     return null;
   }
 
   try {
-    console.log('📸 Capturing screenshot...');
+    console.log('📸 Attempting to capture screenshot...');
 
-    // Get available sources (screens)
-    const sources = await desktopCapturer.getSources({
-      types: ['screen'],
-      thumbnailSize: { width: 1920, height: 1080 }
-    });
+    // Check if desktopCapturer is available
+    if (!desktopCapturer) {
+      console.error('❌ desktopCapturer not available');
+      return null;
+    }
 
-    if (sources.length === 0) {
+    // Get available sources (screens) with error handling
+    let sources;
+    try {
+      sources = await desktopCapturer.getSources({
+        types: ['screen'],
+        thumbnailSize: { width: 1280, height: 720 }
+      });
+    } catch (captureError) {
+      console.error('❌ Failed to get desktop sources:', captureError.message);
+      
+      // Show user-friendly error once
+      if (!global.screenshotErrorShown) {
+        dialog.showMessageBox(mainWindow, {
+          type: 'warning',
+          title: 'Screenshot Feature Unavailable',
+          message: 'Screenshots cannot be captured on this system.',
+          detail: 'The app will continue tracking activity without screenshots. This may be due to system permissions or compatibility issues.',
+          buttons: ['OK']
+        });
+        global.screenshotErrorShown = true;
+      }
+      
+      return null;
+    }
+
+    if (!sources || sources.length === 0) {
       console.error('❌ No screen sources available');
       return null;
     }
 
     // Get the primary screen
     const primarySource = sources[0];
+    
+    if (!primarySource.thumbnail) {
+      console.error('❌ No thumbnail available from screen source');
+      return null;
+    }
+
     const screenshot = primarySource.thumbnail;
 
     // Generate filename with timestamp
     const timestamp = Date.now();
-    const filename = `screenshot_${global.CURRENT_USER_ID}_${currentSessionId}_${timestamp}.png`;
+    const filename = `screenshot_${global.CURRENT_USER_ID}_${timestamp}.png`;
+    
+    // Ensure screenshots directory exists
+    if (!screenshotsDir || !fs.existsSync(screenshotsDir)) {
+      initScreenshotsDirectory();
+    }
+    
     const filepath = path.join(screenshotsDir, filename);
 
     // Save screenshot to file
@@ -188,14 +291,24 @@ async function captureScreenshot() {
     // Return screenshot metadata
     return {
       filename: filename,
-      filepath: filepath,
-      timestamp: new Date().toISOString(),
-      sessionId: currentSessionId,
-      userId: global.CURRENT_USER_ID
+      timestamp: new Date().toISOString()
     };
 
   } catch (err) {
     console.error('❌ Screenshot capture error:', err);
+    
+    // Show error to user (only once per session)
+    if (!global.screenshotErrorShown) {
+      dialog.showMessageBox(mainWindow, {
+        type: 'error',
+        title: 'Screenshot Error',
+        message: 'Failed to capture screenshot',
+        detail: err.message,
+        buttons: ['OK']
+      });
+      global.screenshotErrorShown = true;
+    }
+    
     return null;
   }
 }
@@ -236,9 +349,9 @@ async function addScreenshotToSession(sessionId, screenshotData) {
     await Session.findByIdAndUpdate(sessionId, {
       $push: {
         screenshots: {
-          filename: screenshotData.filename,
-          filepath: screenshotData.filepath,
-          timestamp: screenshotData.timestamp
+          filename: screenshotData.filename,   // ✅ only filename
+          timestamp: screenshotData.timestamp  // ✅ only timestamp
+          // ✅ NO filepath - each computer builds its own path
         }
       }
     });
@@ -476,6 +589,7 @@ function stopTracking() {
 ===================================================== */
 
 // START NEW SESSION
+// START NEW SESSION
 async function startSession() {
   try {
     if (!global.CURRENT_USER_ID) {
@@ -506,6 +620,9 @@ async function startSession() {
     trackingRunning = true;
     startTracking();
 
+    // ✅ UPDATE ATTENDANCE RECORD
+    await updateAttendanceOnSessionStart(session._id, now);
+
     console.log(`✅ New session started: ${currentSessionId}`);
 
     return {
@@ -521,6 +638,7 @@ async function startSession() {
   }
 }
 
+// END CURRENT SESSION
 // END CURRENT SESSION
 async function endSession() {
   try {
@@ -549,7 +667,6 @@ async function endSession() {
         isBrowser: item.isBrowser || false
       };
       
-      // If this is a browser with websites, include the breakdown
       if (item.isBrowser && item.websites) {
         activity.websites = Object.entries(item.websites).map(([siteName, siteData]) => ({
           site: siteName,
@@ -570,6 +687,9 @@ async function endSession() {
       status: 'completed'
     });
 
+    // ✅ UPDATE ATTENDANCE RECORD
+    await updateAttendanceOnSessionEnd(currentSessionId, now, durationSeconds);
+
     console.log(`✅ Session ended with ${activities.length} activities`);
 
     // Clear session state
@@ -587,7 +707,6 @@ async function endSession() {
   } catch (err) {
     console.error("❌ Error ending session:", err);
     
-    // Reset state even on error
     currentSessionId = null;
     sessionStartTime = null;
     activityData = {};
@@ -600,7 +719,247 @@ async function endSession() {
 /* =====================================================
    IPC HANDLERS
 ===================================================== */
+/* =====================================================
+   ADMIN IPC HANDLERS
+===================================================== */
 
+// GET ALL USERS (Admin only)
+/* =====================================================
+   ADMIN IPC HANDLERS
+===================================================== */
+
+// GET ALL USERS
+ipcMain.handle("admin:getUsers", async () => {
+  try {
+    const users = await User.find({})
+      .select("name username email role createdAt")
+      .lean();
+
+    return {
+      success: true,
+      data: users.map(u => ({ ...u, _id: u._id.toString() }))
+    };
+  } catch (err) {
+    console.error("admin:getUsers error:", err);
+    return { success: false, message: "Failed to fetch users" };
+  }
+});
+
+// UPDATE USER ROLE
+ipcMain.handle("admin:updateUserRole", async (_, { userId, role }) => {
+  try {
+    const validRoles = ['EMPLOYEE', 'HR', 'ADMIN'];
+    if (!validRoles.includes(role)) {
+      return { success: false, message: "Invalid role" };
+    }
+
+    const user = await User.findByIdAndUpdate(
+      userId,
+      { role },
+      { new: true }
+    ).select("name username email role").lean();
+
+    if (!user) return { success: false, message: "User not found" };
+
+    console.log(`✅ Role updated: ${user.username} → ${role}`);
+
+    return {
+      success: true,
+      message: `Role updated to ${role}`,
+      user: { ...user, _id: user._id.toString() }
+    };
+  } catch (err) {
+    console.error("admin:updateUserRole error:", err);
+    return { success: false, message: "Failed to update role" };
+  }
+});
+
+// DELETE USER
+ipcMain.handle("admin:deleteUser", async (_, { userId }) => {
+  try {
+    await User.findByIdAndDelete(userId);
+    await Session.deleteMany({ userId });
+    await Attendance.deleteMany({ userId });
+
+    console.log(`✅ User deleted: ${userId}`);
+    return { success: true, message: "User deleted successfully" };
+  } catch (err) {
+    console.error("admin:deleteUser error:", err);
+    return { success: false, message: "Failed to delete user" };
+  }
+});
+
+// EDIT ACTIVITY
+ipcMain.handle("admin:editActivity", async (_, { sessionId, activityIndex, updates }) => {
+  try {
+    console.log(`✏️ Editing activity ${activityIndex} in session ${sessionId}`);
+
+    const session = await Session.findById(sessionId);
+    if (!session) {
+      return { success: false, message: "Session not found" };
+    }
+
+    if (activityIndex < 0 || activityIndex >= session.activities.length) {
+      return { success: false, message: "Activity index out of range" };
+    }
+
+    if (updates.seconds !== undefined) {
+      session.activities[activityIndex].seconds = Number(updates.seconds);
+    }
+    if (updates.category !== undefined) {
+      session.activities[activityIndex].category = updates.category;
+    }
+    if (updates.app !== undefined) {
+      session.activities[activityIndex].app = updates.app;
+    }
+
+    session.markModified('activities');
+    await session.save();
+
+    console.log(`✅ Activity updated in session: ${sessionId}`);
+    return { success: true, message: "Activity updated successfully" };
+  } catch (err) {
+    console.error("admin:editActivity error:", err);
+    return { success: false, message: "Failed to edit activity: " + err.message };
+  }
+});
+
+// DELETE ACTIVITY
+ipcMain.handle("admin:deleteActivity", async (_, { sessionId, activityIndex }) => {
+  try {
+    console.log(`🗑️ Deleting activity ${activityIndex} from session ${sessionId}`);
+
+    const session = await Session.findById(sessionId);
+    if (!session) {
+      return { success: false, message: "Session not found" };
+    }
+
+    if (activityIndex < 0 || activityIndex >= session.activities.length) {
+      return { success: false, message: "Activity index out of range" };
+    }
+
+    session.activities.splice(activityIndex, 1);
+
+    // Recalculate total duration
+    session.durationSeconds = session.activities.reduce(
+      (sum, a) => sum + (a.seconds || 0), 0
+    );
+
+    session.markModified('activities');
+    await session.save();
+
+    console.log(`✅ Activity deleted from session: ${sessionId}`);
+    return { success: true, message: "Activity deleted" };
+  } catch (err) {
+    console.error("admin:deleteActivity error:", err);
+    return { success: false, message: "Failed to delete activity: " + err.message };
+  }
+});
+
+// ADD MANUAL ACTIVITY
+ipcMain.handle("admin:addActivity", async (_, { sessionId, activity }) => {
+  try {
+    console.log(`➕ Adding activity to session ${sessionId}`);
+
+    const session = await Session.findById(sessionId);
+    if (!session) {
+      return { success: false, message: "Session not found" };
+    }
+
+    session.activities.push({
+      app: activity.app || "Manual Entry",
+      site: activity.site || "-",
+      seconds: Number(activity.seconds) || 0,
+      clicks: Number(activity.clicks) || 0,
+      category: activity.category || "Uncategorized",
+      isBrowser: false
+    });
+
+    // Recalculate total duration
+    session.durationSeconds = session.activities.reduce(
+      (sum, a) => sum + (a.seconds || 0), 0
+    );
+
+    session.markModified('activities');
+    await session.save();
+
+    console.log(`✅ Activity added to session: ${sessionId}`);
+    return { success: true, message: "Activity added" };
+  } catch (err) {
+    console.error("admin:addActivity error:", err);
+    return { success: false, message: "Failed to add activity: " + err.message };
+  }
+});
+
+// DELETE SCREENSHOT
+ipcMain.handle("admin:deleteScreenshot", async (_, { sessionId, filename }) => {
+  try {
+    console.log(`🗑️ Deleting screenshot: ${filename}`);
+
+    // Remove from DB
+    await Session.findByIdAndUpdate(sessionId, {
+      $pull: { screenshots: { filename: filename } }
+    });
+
+    // Delete file from disk
+    if (screenshotsDir) {
+      const filepath = path.join(screenshotsDir, filename);
+      if (fs.existsSync(filepath)) {
+        fs.unlinkSync(filepath);
+        console.log(`✅ Screenshot file deleted: ${filename}`);
+      }
+    }
+
+    return { success: true, message: "Screenshot deleted" };
+  } catch (err) {
+    console.error("admin:deleteScreenshot error:", err);
+    return { success: false, message: "Failed to delete screenshot: " + err.message };
+  }
+});
+
+// GET USER TRACKING SETTINGS
+ipcMain.handle("admin:getUserSettings", async (_, { userId }) => {
+  try {
+    const user = await User.findById(userId)
+      .select("name username trackingSettings")
+      .lean();
+
+    if (!user) return { success: false, message: "User not found" };
+
+    return {
+      success: true,
+      settings: user.trackingSettings || {
+        screenshotInterval: 10,
+        trackingEnabled: true,
+        workHoursStart: "09:00",
+        workHoursEnd: "18:00"
+      }
+    };
+  } catch (err) {
+    console.error("admin:getUserSettings error:", err);
+    return { success: false, message: "Failed to fetch settings" };
+  }
+});
+
+// UPDATE USER TRACKING SETTINGS
+ipcMain.handle("admin:updateUserSettings", async (_, { userId, settings }) => {
+  try {
+    await User.findByIdAndUpdate(userId, {
+      trackingSettings: {
+        screenshotInterval: Number(settings.screenshotInterval) || 10,
+        trackingEnabled: settings.trackingEnabled !== false,
+        workHoursStart: settings.workHoursStart || "09:00",
+        workHoursEnd: settings.workHoursEnd || "18:00"
+      }
+    });
+
+    console.log(`✅ Tracking settings updated for user: ${userId}`);
+    return { success: true, message: "Settings updated successfully" };
+  } catch (err) {
+    console.error("admin:updateUserSettings error:", err);
+    return { success: false, message: "Failed to update settings: " + err.message };
+  }
+});
 // REGISTRATION
 ipcMain.handle("register", async (event, payload) => {
   try {
@@ -688,6 +1047,134 @@ ipcMain.handle("login", async (_, { username, password }) => {
   } catch (err) {
     console.error("Login error:", err);
     return { success: false, message: "Login failed" };
+  }
+});
+
+
+/* =====================================================
+   ATTENDANCE IPC HANDLERS
+===================================================== */
+
+// Get attendance for specific user and date range
+ipcMain.handle("attendance:get", async (_, { userId, date, startDate, endDate }) => {
+  try {
+    const query = {};
+    
+    if (userId) {
+      query.userId = userId;
+    }
+    
+    if (date) {
+      query.date = date;
+    } else if (startDate || endDate) {
+      query.date = {};
+      if (startDate) query.date.$gte = startDate;
+      if (endDate) query.date.$lte = endDate;
+    }
+
+    console.log("📅 Attendance query:", JSON.stringify(query));
+
+    const attendance = await Attendance.find(query)
+      .populate("userId", "name username email")
+      .populate("sessionIds", "startTime endTime durationSeconds")
+      .sort({ date: -1 })
+      .lean();
+
+    console.log(`📊 Found ${attendance.length} attendance records`);
+
+    return {
+      success: true,
+      data: attendance.map(record => ({
+        ...record,
+        _id: record._id.toString(),
+        userId: record.userId ? {
+          _id: record.userId._id.toString(),
+          name: record.userId.name,
+          username: record.userId.username,
+          email: record.userId.email
+        } : null,
+        sessionIds: record.sessionIds.map(s => s._id.toString())
+      }))
+    };
+  } catch (err) {
+    console.error("Get attendance error:", err);
+    return { success: false, message: "Failed to fetch attendance" };
+  }
+});
+
+// Get attendance summary for HR dashboard
+ipcMain.handle("attendance:summary", async (_, { date, startDate, endDate }) => {
+  try {
+    const query = {};
+    
+    if (date) {
+      query.date = date;
+    } else if (startDate || endDate) {
+      query.date = {};
+      if (startDate) query.date.$gte = startDate;
+      if (endDate) query.date.$lte = endDate;
+    }
+
+    const attendance = await Attendance.find(query)
+      .populate("userId", "name username email")
+      .sort({ date: -1 })
+      .lean();
+
+    return {
+      success: true,
+      data: attendance.map(record => ({
+        _id: record._id.toString(),
+        employee: {
+          _id: record.userId._id.toString(),
+          name: record.userId.name,
+          username: record.userId.username
+        },
+        date: record.date,
+        firstSessionStart: record.firstSessionStart,
+        lastSessionEnd: record.lastSessionEnd,
+        totalWorkSeconds: record.totalWorkSeconds,
+        sessionsCount: record.sessionsCount,
+        status: record.status
+      }))
+    };
+  } catch (err) {
+    console.error("Get attendance summary error:", err);
+    return { success: false, message: "Failed to fetch attendance summary" };
+  }
+});
+
+// Get today's attendance for current user
+ipcMain.handle("attendance:today", async () => {
+  try {
+    if (!global.CURRENT_USER_ID) {
+      return { success: false, message: "Not authenticated" };
+    }
+
+    const attendance = await Attendance.findOne({
+      userId: global.CURRENT_USER_ID,
+      date: today()
+    })
+    .populate("sessionIds", "startTime endTime durationSeconds status")
+    .lean();
+
+    if (!attendance) {
+      return {
+        success: true,
+        data: null,
+        message: "No attendance record for today"
+      };
+    }
+
+    return {
+      success: true,
+      data: {
+        ...attendance,
+        _id: attendance._id.toString()
+      }
+    };
+  } catch (err) {
+    console.error("Get today's attendance error:", err);
+    return { success: false, message: "Failed to fetch today's attendance" };
   }
 });
 
@@ -989,12 +1476,16 @@ ipcMain.handle("screenshots:get", async (_, { sessionId }) => {
   }
 });
 
-ipcMain.handle("screenshots:getFile", async (_, { filepath }) => {
+// ✅ AFTER
+ipcMain.handle("screenshots:getFile", async (_, { filename }) => {
   try {
+    const filepath = path.join(screenshotsDir, filename); // ✅ build local path from filename
+    if (!screenshotsDir || !filename) {
+      return { success: false, message: "Invalid filename or screenshots directory" };
+    }
     if (!fs.existsSync(filepath)) {
       return { success: false, message: "Screenshot file not found" };
     }
-
     const buffer = fs.readFileSync(filepath);
     const base64 = buffer.toString('base64');
 
@@ -1018,6 +1509,7 @@ ipcMain.on("mouse-click", () => {
 ===================================================== */
 app.whenReady().then(async () => {
   await connectDB();
+  
   initScreenshotsDirectory();
   cleanupOldScreenshots(30); // Keep screenshots for 30 days
   createWindow();
