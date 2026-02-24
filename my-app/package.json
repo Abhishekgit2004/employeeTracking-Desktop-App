@@ -21,6 +21,7 @@
   },
   "dependencies": {
     "active-win": "^8.2.1",
+    "archiver": "^7.0.1",
     "bcrypt": "^5.1.1",
     "dotenv": "^16.4.5",
     "mongoose": "^8.1.0",
@@ -58,7 +59,9 @@
       "target": [
         {
           "target": "nsis",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ],
       "artifactName": "${productName}-Setup-${version}.${ext}"
@@ -75,7 +78,10 @@
       "target": [
         {
           "target": "dmg",
-          "arch": ["x64", "arm64"]
+          "arch": [
+            "x64",
+            "arm64"
+          ]
         }
       ],
       "category": "public.app-category.business"
@@ -87,7 +93,9 @@
       "target": [
         {
           "target": "AppImage",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ],
       "category": "Office"

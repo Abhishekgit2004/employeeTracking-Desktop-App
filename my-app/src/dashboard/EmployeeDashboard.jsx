@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
-import AttendanceTable from "../components/AttendanceTable";
-
+// import AttendanceTable from "../components/AttendanceTable";
+import AttendanceTable from "./AttendanceTable";
+import ScreenshotManager from "./ScreenshotManager";
 export default function EmployeeDashboard({ user, onLogout }) {
   const [attendanceStatus, setAttendanceStatus] = useState({
     active: false,
@@ -59,9 +60,11 @@ export default function EmployeeDashboard({ user, onLogout }) {
         startDate: date,
         endDate: date,
       });
+      console.log(attResponse)
 
       if (attResponse.success && attResponse.data.length > 0) {
         setTodayAttendance(attResponse.data[0]);
+        console.log("newData",attResponse.data[0])
       } else {
         setTodayAttendance(null);
       }
@@ -255,8 +258,22 @@ export default function EmployeeDashboard({ user, onLogout }) {
                 </div>
               )}
             </div>
+             {/* ✅ NEW: Screenshot Manager */}
+    {todayAttendance.sessionIds && todayAttendance.sessionIds.length > 0 && (
+      <ScreenshotManager 
+        session={{
+          _id: todayAttendance.sessionIds[0], // Latest session
+          date: selectedDate
+        }}
+      />
+    )}
+
           </>
         )}
+
+  
+
+   
 
         {/* Attendance History Tab */}
         {activeTab === 'history' && (

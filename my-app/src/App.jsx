@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import AuthLayout from "./pages/AuthLayout";
 import Dashboard from "./dashboard/Dashboard";
 import HRDashboard from "./dashboard/HRDashboard";
+import EmployeeDashboard from "./dashboard/EmployeeDashboard";
 import AdminDashboard from "./dashboard/AdminDashboard"; // Import the Admin
 export default function App() {
   const [currentUser, setCurrentUser] = useState(null);

@@ -27,7 +27,7 @@ export default function LoginPage({ onSwitch }) {
     try {
       // Call Electron IPC to login
       const result = await window.electron.login({ username, password });
-
+      console.log(result)
       if (result.success) {
         showToast("Login successful!", "success");
         // Call the login function from AuthContext
@@ -36,7 +36,7 @@ export default function LoginPage({ onSwitch }) {
         showToast(result.message || "Login failed", "error");
       }
     } catch (err) {
-      console.error("Login error:", err);
+      console.log("Login error:", err);
       showToast("An error occurred during login", "error");
     } finally {
       setLoading(false);
